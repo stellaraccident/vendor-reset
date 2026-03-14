@@ -55,6 +55,9 @@ struct vendor_reset_ops
   int (*post_reset)(struct vendor_reset_dev *);
 };
 
+/* per-device flags for vendor_reset_cfg */
+#define VENDOR_RESET_CFG_NO_BUS_RESET  (1 << 0)  /* suppress PCIe bus reset at module load */
+
 struct vendor_reset_cfg
 {
   /* the vendor ID */
@@ -71,6 +74,9 @@ struct vendor_reset_cfg
 
   /* device type string for print */
   const char * info_str;
+
+  /* per-device configuration flags (VENDOR_RESET_CFG_*) */
+  unsigned int flags;
 };
 
 /* search the device table for the specified vendor and device id and return it */

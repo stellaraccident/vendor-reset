@@ -18,9 +18,49 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 */
 
 #include <linux/module.h>
+#include <linux/pci.h>
 
 #include "ioctl.h"
 #include "hook.h"
+#include "vendor-reset-dev.h"
+
+/*
+ * Set PCI_DEV_FLAGS_NO_BUS_RESET on devices that have the
+ * VENDOR_RESET_CFG_NO_BUS_RESET flag in their config entry.
+ *
+ * This must happen at module load time, before vfio-pci attempts a bus
+ * reset during VM startup. The ftrace hook in hook.c intercepts
+ * pci_dev_specific_reset, but the IOMMU group-level bus reset in vfio
+ * goes through pci_reset_bus which does NOT call pci_dev_specific_reset.
+ * The only way to prevent it is to have NO_BUS_RESET set on the device
+ * before vfio opens the group.
+ *
+ * Only devices with VENDOR_RESET_CFG_NO_BUS_RESET are affected. Devices
+ * with working vendor-reset handlers (e.g. Vega 20 BACO) do not need
+ * this — their handler provides a real reset that preempts bus reset via
+ * the ftrace hook.
+ *
+ * NOTE: The proper upstream fix for devices that cannot survive a bus
+ * reset is a PCI quirk in drivers/pci/quirks.c:
+ *   DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ATI, 0x7550, quirk_no_bus_reset);
+ * This module-level workaround serves as a proof-of-concept for that fix.
+ */
+static void vendor_reset_apply_no_bus_reset(void)
+{
+  struct pci_dev *pdev = NULL;
+  const struct vendor_reset_cfg *cfg;
+
+  for_each_pci_dev(pdev)
+  {
+    cfg = vendor_reset_cfg_find(pdev->vendor, pdev->device);
+    if (cfg && (cfg->flags & VENDOR_RESET_CFG_NO_BUS_RESET))
+    {
+      pdev->dev_flags |= PCI_DEV_FLAGS_NO_BUS_RESET;
+      pci_info(pdev, "vendor-reset: set NO_BUS_RESET for %s [%04x:%04x]\n",
+               cfg->info_str, pdev->vendor, pdev->device);
+    }
+  }
+}
 
 static int __init vendor_reset_init(void)
 {
@@ -33,6 +73,8 @@ static int __init vendor_reset_init(void)
   ret = vendor_reset_hook_init();
   if (ret)
     goto err;
+
+  vendor_reset_apply_no_bus_reset();
 
   return 0;
 
